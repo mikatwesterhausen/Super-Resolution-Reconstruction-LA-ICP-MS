@@ -1,0 +1,293 @@
+clear
+close all
+clc
+
+%% Import
+delimiterIn = ',';
+headerlinesIn = 1;
+Directory='D:\';
+mkdir ([Directory], 'OutDirectory');
+OutDirectory=([Directory 'OutDirectory\']);
+mkdir ([Directory], 'SliceDirectory');
+SliceDirectory=([Directory 'SliceDirectory\']);
+
+%% Files and initial conditions for loop
+HFiles=dir([Directory '*horz*.csv']);
+VFiles=dir([Directory '*vert*.csv']);
+lengthV=length(VFiles);
+lengthH=length(HFiles);
+layer=0; 
+
+%% Constants
+Speed=30;
+Scantime=0.125;
+SpotSize=15;
+gradient=1;
+intercept=0;
+Frequency=20;
+M=SpotSize/(Speed*Scantime); 
+N=ceil(M/2); 
+Layers=2; 
+TheoryRes=Speed/Frequency;
+ExpRes=Speed/(M*2);
+
+
+%% Parameters
+dataH = importdata([Directory HFiles(1).name],delimiterIn,headerlinesIn);
+dataV = importdata([Directory VFiles(1).name],delimiterIn,headerlinesIn);
+
+la1=size(dataH.data,1);
+wa=size(dataH.data,2);
+lb1=size(dataV.data,1);
+wb=size(dataV.data,2);
+j=round(((1.2/Scantime)*10));
+k=round((la1-(wa*M))-j);
+l=round((lb1-(wb*M))-j);
+A1=dataH.data;
+A1(la1-l+1:la1, :) = []; 
+A1(1:j, :) = []; 
+updowncut1=A1;
+sizex=size(updowncut1,1)*Layers+N; 
+sizey=size(updowncut1,2)*M*Layers+N;  
+lengthz=length(dir([Directory '*.csv'])); 
+FirstLayer=kron(dataH.data,ones(1,M)); 
+
+%% Allocation
+RM=zeros(sizey,sizex,lengthz);
+
+%% Loop of all data manipulation
+
+for ifp=1:lengthV
+    fileH = importdata([Directory HFiles(ifp).name],delimiterIn,headerlinesIn);
+    fileV = importdata([Directory VFiles(ifp).name],delimiterIn,headerlinesIn);
+    dataH=fileH.data;
+    dataV=fileV.data;
+    
+    dataH(la1-l+1:la1, :) = []; 
+    dataH(1:j, :) = []; 
+    
+    dataH=(dataH-intercept)/gradient; 
+    dataH=kron(dataH,ones(1,M)); 
+    dataH=upsample(dataH,Layers); 
+    dataH=transpose(dataH); 
+    dataH=upsample(dataH,Layers); 
+    
+    dataH=padarray(dataH,[N N],0,'post'); 
+    
+    dataV(lb1-k+1:lb1, :) = []; 
+    dataV(1:j, :) = []; 
+    
+    dataV=(dataV-intercept)/gradient; 
+    dataV=kron(dataV,ones(1,M)); 
+    dataV=upsample(dataV,Layers); 
+    dataV=transpose(dataV); %
+    dataV=upsample(dataV,Layers); 
+    dataV=transpose(dataV); 
+    
+    dataV=padarray(dataV,[N N],0,'pre'); 
+    
+    layer=layer+1;
+    
+    RM(:,:,layer) = dataH;
+    
+    layer=layer+1;
+    
+    RM(:,:,layer) = dataV;
+    
+    
+end
+
+if lengthV<lengthH
+    
+    dataH = importdata([Directory HFiles(lengthH).name],delimiterIn,headerlinesIn);
+      
+    dataH(la1-l+1:la1, :) = [];
+    dataH(1:j, :) = []; 
+    
+    dataH=(dataH-intercept)/gradient; 
+    dataH=kron(dataH,ones(1,M)); 
+    dataH=upsample(dataH,Layers); 
+    dataH=transpose(dataH); 
+    dataH=upsample(dataH,Layers); 
+    
+    dataH=padarray(dataH,[N N],0,'post'); 
+    
+    layer=layer+1;
+    
+    RM(:,:,layer) = dataH;
+    
+end
+    
+RM(RM == 0) = NaN;
+
+%% Trilinear interpolation
+FM = ones(size(RM));
+MM = ones(size(RM));
+MM = MM.*RM;
+[NcomX, NcomY, NcomZ] = size(RM);
+
+for iz=1:NcomZ
+    for ic=1:NcomY
+        for ir=1:NcomX
+            if isnan(MM(ir,ic,iz))
+                cf=0;
+                avenum=0;
+                if (iz>1)&&(~isnan(MM(ir,ic,iz-1)))
+                    cf=cf+MM(ir,ic,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(iz>1)&&(~isnan(MM(ir-1,ic,iz-1)))
+                    cf=cf+MM(ir-1,ic,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(iz>1)&&(~isnan(MM(ir+1,ic,iz-1)))
+                    cf=cf+MM(ir+1,ic,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ic-1>0)&&(iz>1)&&(~isnan(MM(ir,ic-1,iz-1)))
+                    cf=cf+MM(ir,ic-1,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ic+1<=NcomY)&&(iz>1)&&(~isnan(MM(ir,ic+1,iz-1)))
+                    cf=cf+MM(ir,ic+1,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(ic-1>0)&&(iz>1)&&(~isnan(MM(ir-1,ic-1,iz-1)))
+                    cf=cf+MM(ir-1,ic-1,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(ic+1<=NcomY)&&(iz>1)&&(~isnan(MM(ir+1,ic+1,iz-1)))
+                    cf=cf+MM(ir+1,ic+1,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(ic-1>0)&&(iz>1)&&(~isnan(MM(ir+1,ic-1,iz-1)))
+                    cf=cf+MM(ir+1,ic-1,iz-1);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(ic+1<=NcomY)&&(iz>1)&&(~isnan(MM(ir-1,ic+1,iz-1)))
+                    cf=cf+MM(ir-1,ic+1,iz-1);
+                    avenum=avenum+1;
+                end
+                %from layer-1 to layer
+                if (ir-1>0)&&(~isnan(MM(ir-1,ic,iz)))
+                    cf=cf+MM(ir-1,ic,iz);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(~isnan(MM(ir+1,ic,iz)))
+                    cf=cf+MM(ir+1,ic,iz);
+                    avenum=avenum+1;
+                end
+                if (ic-1>0)&&(~isnan(MM(ir,ic-1,iz)))
+                    cf=cf+MM(ir,ic-1,iz);
+                    avenum=avenum+1;
+                end
+                if (ic+1<=NcomY)&&(~isnan(MM(ir,ic+1,iz)))
+                    cf=cf+MM(ir,ic+1,iz);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(ic-1>0)&&(~isnan(MM(ir-1,ic-1,iz)))
+                    cf=cf+MM(ir-1,ic-1,iz);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(ic+1<=NcomY)&&(~isnan(MM(ir+1,ic+1,iz)))
+                    cf=cf+MM(ir+1,ic+1,iz);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(ic-1>0)&&(~isnan(MM(ir+1,ic-1,iz)))
+                    cf=cf+MM(ir+1,ic-1,iz);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(ic+1<=NcomY)&&(~isnan(MM(ir-1,ic+1,iz)))
+                    cf=cf+MM(ir-1,ic+1,iz);
+                    avenum=avenum+1;
+                end
+                %from layer to layer+1
+                if (iz<NcomZ)&&(~isnan(MM(ir,ic,iz+1)))
+                    cf=cf+MM(ir,ic,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(iz<NcomZ)&&(~isnan(MM(ir-1,ic,iz+1)))
+                    cf=cf+MM(ir-1,ic,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(iz<NcomZ)&&(~isnan(MM(ir+1,ic,iz+1)))
+                    cf=cf+MM(ir+1,ic,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ic-1>0)&&(iz<NcomZ)&&(~isnan(MM(ir,ic-1,iz+1)))
+                    cf=cf+MM(ir,ic-1,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ic+1<=NcomY)&&(iz<NcomZ)&&(~isnan(MM(ir,ic+1,iz+1)))
+                    cf=cf+MM(ir,ic+1,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(ic-1>0)&&(iz<NcomZ)&&(~isnan(MM(ir-1,ic-1,iz+1)))
+                    cf=cf+MM(ir-1,ic-1,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(ic+1<=NcomY)&&(iz<NcomZ)&&(~isnan(MM(ir+1,ic+1,iz+1)))
+                    cf=cf+MM(ir+1,ic+1,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ir+1<=NcomX)&&(ic-1>0)&&(iz<NcomZ)&&(~isnan(MM(ir+1,ic-1,iz+1)))
+                    cf=cf+MM(ir+1,ic-1,iz+1);
+                    avenum=avenum+1;
+                end
+                if (ir-1>0)&&(ic+1<=NcomY)&&(iz<NcomZ)&&(~isnan(MM(ir-1,ic+1,iz+1)))
+                    cf=cf+MM(ir-1,ic+1,iz+1);
+                    avenum=avenum+1;
+                end
+                         
+                FM(ir,ic,iz)=cf/avenum;
+            else
+                FM(ir,ic,iz)=MM(ir,ic,iz);
+            end
+        end
+    end
+end
+
+
+
+%% Inpaint & Assign
+FM(isnan(FM))=0; 
+InterpBig3D=FM; 
+Interp2D=sum(InterpBig3D,3);
+M=round(((2*M)-1)/2)*2+1; 
+Gaussian=imgaussfilt(Interp2D,1,'FilterSize',M);
+
+%% Split layers
+for ilayers=1:lengthz
+    name = sprintf('%sSlice_%d_Gd158SRR.csv',SliceDirectory,ilayers);
+    dlmwrite(name,FM(:, :, ilayers));
+end
+
+%% Writing Files
+dlmwrite([OutDirectory 'SRRCombined3D.csv'],InterpBig3D);
+dlmwrite([OutDirectory 'SRRCombined2D.csv'],Interp2D);
+dlmwrite([OutDirectory 'SRRGaussian.csv'],Gaussian);
+dlmwrite([OutDirectory 'SRRConventional.csv'],FirstLayer);
+
+InterpBin=InterpBig3D;
+
+[x y z]=size(InterpBin);
+filename='3DSRR.vtk'; 
+total=numel(InterpBig3D);
+k=3;
+z=size(InterpBig3D,3); 
+fp=fopen(sprintf('%s',filename),'w'); 
+fp=fopen([OutDirectory '3DSRR.vtk'],'w'); 
+fprintf(fp,sprintf('# vtk DataFile Version 2.0\n%s\nASCII\nDATASET STRUCTURED_POINTS\nDIMENSIONS %d %d %d\nORIGIN 0.0 0.0 0.0\nSPACING 1.0 1.0 1.0\n \nPOINT_DATA %d\nSCALARS values double\nLOOKUP_TABLE default\n',filename,x,y,z,total)');
+for z1=1:z;
+for y1=1:y;
+for    x1=1:x;
+    if x1>=x;
+        fprintf(fp,'%d\n',InterpBin(x1,y1,z1));
+    else
+    fprintf(fp,'%d\t',InterpBin(x1,y1,z1));
+    end
+            
+end
+end
+end
+fclose(fp);
